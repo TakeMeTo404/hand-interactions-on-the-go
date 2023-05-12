@@ -85,6 +85,11 @@ public abstract class ExperimentNetworkClient: ExperimentNetwork
 
         return address;
     }
+    
+    protected override void OnDestroy()
+    {
+        base.OnDestroy();
+    }
 
     protected bool Send(MessageFromHelmet message)
     {

@@ -34,6 +34,8 @@ public class ExperimentNetwork: MonoBehaviour
         {
             public int id; // by it we can calc runConfigs sequence either on client or server
             public bool left; // whether user il left handed
+            public long doneBitmap;
+            
             public int index; // index of current runConfig. Means that those who have smaller index were fulfilled
             public int stage; // stage of the current runConfig. If it is preparing, running or idle
 
@@ -86,11 +88,15 @@ public class ExperimentNetwork: MonoBehaviour
         {
             SetParticipantID,
             SetLeftHanded,
+            SetStepIsDone,
+            SavePrefs,
             RefreshExperimentSummary,
+            
             PrepareNextRun,
             StartNextRun,
             FinishTraining,
-            // walking context trials. User has selected all targets with such size, but was he really walking with metronome?
+            
+            // trials stiff
             ValidateTrial,
             InvalidateTrial
         }
@@ -122,6 +128,54 @@ public class ExperimentNetwork: MonoBehaviour
                 return base.ToString() + $", participantID={participantID}";
             }
         }
+        
+        [Serializable]
+        public class PrepareNextStep: MessageToHelmet
+        {
+            public readonly int index;
+
+            public PrepareNextStep(int index): base(Code.PrepareNextRun)
+            {
+                this.index = index;
+            }
+            
+            public override string ToString()
+            {
+                return base.ToString() + $", prepare={index}";
+            }
+        }
+        
+        [Serializable]
+        public class StartNextStep: MessageToHelmet
+        {
+            public readonly int index;
+
+            public StartNextStep(int index): base(Code.StartNextRun)
+            {
+                this.index = index;
+            }
+            
+            public override string ToString()
+            {
+                return base.ToString() + $", start={index}";
+            }
+        }
+        
+        [Serializable]
+        public class FinishTrainingStep: MessageToHelmet
+        {
+            public readonly int index;
+
+            public FinishTrainingStep(int index): base(Code.FinishTraining)
+            {
+                this.index = index;
+            }
+            
+            public override string ToString()
+            {
+                return base.ToString() + $", index={index}";
+            }
+        }
 
         [Serializable]
         public class SetLeftHanded : MessageToHelmet
@@ -136,6 +190,19 @@ public class ExperimentNetwork: MonoBehaviour
             public override string ToString()
             {
                 return base.ToString() + $", leftHanded={leftHanded}";
+            }
+        }
+        
+        [Serializable]
+        public class SetStepIsDone: MessageToHelmet
+        {
+            public readonly int stepIndex;
+            public readonly bool done;
+
+            public SetStepIsDone(int stepIndex, bool done) : base(Code.SetStepIsDone)
+            {
+                this.stepIndex = stepIndex;
+                this.done = done;
             }
         }
     }

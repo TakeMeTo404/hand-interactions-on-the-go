@@ -2,15 +2,19 @@ using System;
 using System.Collections;
 using System.Collections.Generic;
 using System.Linq;
+using System.IO;
 using UnityEngine;
+using Utils;
 
 public class HelmetMainProcess: ExperimentNetworkClient
 {
-    private int participantId = 1;
-    private bool leftHanded = false;
+    private ParticipantPrefs participantPrefs;
+    
+    /*private int participantId = 1;
+    private bool leftHanded = false;*/
 
     private ExperimentManager.RunConfig[] _runConfigs;
-    private int currentRunConfigIndex; // for example 4, means that previous 4 runs (0,1,2,3) were fulfilled already
+    private int currentRunningStepIndex; // for example 4, means that previous 4 runs (0,1,2,3) were fulfilled already
     private RunStage currentRunStage = RunStage.Idle; // is this run already in progress or not
 
     [SerializeField] private ExperimentManager experimentManager;
@@ -90,8 +94,8 @@ public class HelmetMainProcess: ExperimentNetworkClient
 
     private void UpdateRunConfigs()
     {
-        _runConfigs = GenerateRunConfigs(participantId, leftHanded);
-        currentRunConfigIndex = 0;
+        _runConfigs = GenerateRunConfigs(participantPrefs.participantId, participantPrefs.leftHanded);
+        currentRunningStepIndex = -1;
         currentRunStage = RunStage.Idle;
     }
 
@@ -99,18 +103,29 @@ public class HelmetMainProcess: ExperimentNetworkClient
     {
         var summary = new MessageFromHelmet.Summary();
 
-        summary.id = participantId;
-        summary.left = leftHanded;
-        summary.index = currentRunConfigIndex;
+        summary.id = participantPrefs.participantId;
+        summary.left = participantPrefs.leftHanded;
+        summary.doneBitmap = participantPrefs.doneBitmap;
+        summary.index = currentRunningStepIndex;
         summary.stage = (int)currentRunStage;
 
         Send(summary);
     }
-    
+
     protected override void Start()
     {
         base.Start();
+        
+        participantPrefs = ParticipantPrefs.ForParticipant(1);
         UpdateRunConfigs();
+
+        int indexOfMetronomeTraining = _runConfigs.ToList().FindIndex(config => config.isMetronomeTraining);
+        int indexOfComfortUIPlacement = _runConfigs.ToList().FindIndex(config => config.isPlacingComfortYAndZ);
+        long bitmap = participantPrefs.doneBitmap;
+        bitmap = Bitmap.SetFalse(bitmap, indexOfMetronomeTraining);
+        bitmap = Bitmap.SetFalse(bitmap, indexOfComfortUIPlacement);
+        participantPrefs.doneBitmap = bitmap;
+        
         connectionEstablished.AddListener(SendSummary);
         experimentManager.unexpectedErrorOccured.AddListener((error) =>
         {
@@ -118,7 +133,9 @@ public class HelmetMainProcess: ExperimentNetworkClient
         });
         experimentManager.trialsFinished.AddListener(() =>
         {
-            currentRunConfigIndex++;
+            long bitmap = participantPrefs.doneBitmap;
+            bitmap = Bitmap.SetTrue(bitmap, currentRunningStepIndex);
+            participantPrefs.doneBitmap = bitmap;
             currentRunStage = RunStage.Idle;
             SendSummary();
         });
@@ -136,6 +153,9 @@ public class HelmetMainProcess: ExperimentNetworkClient
             case MessageToHelmet.Code.RefreshExperimentSummary:
                 SendSummary();
                 break;
+            case MessageToHelmet.Code.SavePrefs:
+                participantPrefs.Save();
+                break;
             case MessageToHelmet.Code.SetLeftHanded:
                 if (currentRunStage != RunStage.Idle)
                 {
@@ -145,7 +165,7 @@ public class HelmetMainProcess: ExperimentNetworkClient
                 }
                 else
                 {
-                    leftHanded = (message as MessageToHelmet.SetLeftHanded).leftHanded;
+                    participantPrefs.leftHanded = (message as MessageToHelmet.SetLeftHanded).leftHanded;
                     UpdateRunConfigs();
                     SendSummary();
                 }
@@ -159,7 +179,7 @@ public class HelmetMainProcess: ExperimentNetworkClient
                 }
                 else
                 {
-                    participantId = (message as MessageToHelmet.SetParticipantID).participantID;
+                    participantPrefs.participantId = (message as MessageToHelmet.SetParticipantID).participantID;
                     UpdateRunConfigs();
                     SendSummary();
                 }
@@ -171,10 +191,23 @@ public class HelmetMainProcess: ExperimentNetworkClient
                         "Cannot prepare when is running"));
                     break;
                 }
-                // otherwise, if idle (or prepare again), that's ok
+                var msg = message as MessageToHelmet.PrepareNextStep;
+                
+                if (currentRunStage == RunStage.Preparing)
+                {
+                    if (msg.index != currentRunningStepIndex)
+                    {
+                        Send(new MessageFromHelmet.InvalidOperation(
+                            "Cannot prepare when other step was prepared"));
+                        break;
+                    }                    
+                }
+                
+                currentRunningStepIndex = msg.index;
+                
                 currentRunStage = RunStage.Preparing;
                 SendSummary();
-                experimentManager.OnServerSaidPrepare(_runConfigs[currentRunConfigIndex]);
+                experimentManager.OnServerSaidPrepare(_runConfigs[currentRunningStepIndex]);
                 break;
             case MessageToHelmet.Code.StartNextRun:
                 if (currentRunStage != RunStage.Preparing)
@@ -183,15 +216,31 @@ public class HelmetMainProcess: ExperimentNetworkClient
                         "Cannot start when stage is not 'preparing'"));
                     break;
                 }
+                var startMsg = message as MessageToHelmet.StartNextStep;
+                if (startMsg.index != currentRunningStepIndex)
+                {
+                    Send(new MessageFromHelmet.InvalidOperation(
+                        "Cannot start step which has not been prepared yet"));
+                    break;
+                }
                 currentRunStage = RunStage.Running;
                 SendSummary();
                 experimentManager.OnServerSaidStart();
                 break;
             case MessageToHelmet.Code.FinishTraining:
-                if (currentRunStage == RunStage.Running && (_runConfigs[currentRunConfigIndex].isTraining ||
-                                                            _runConfigs[currentRunConfigIndex].isMetronomeTraining))
+                if (currentRunStage == RunStage.Running && (_runConfigs[currentRunningStepIndex].isTraining ||
+                                                            _runConfigs[currentRunningStepIndex].isMetronomeTraining))
                 {
-                    currentRunConfigIndex++;
+                    var finishMsg = message as MessageToHelmet.FinishTrainingStep;
+                    if (finishMsg.index != currentRunningStepIndex)
+                    {
+                        Send(new MessageFromHelmet.InvalidOperation(
+                            "Invalid stop command. Can stop only training which is running"));
+                        break;
+                    }
+
+                    participantPrefs.doneBitmap = Bitmap.SetTrue(participantPrefs.doneBitmap, currentRunningStepIndex);
+                    currentRunningStepIndex++;
                     currentRunStage = RunStage.Idle;
                     experimentManager.OnServerSaidFinishTraining();
                     SendSummary();
@@ -205,7 +254,7 @@ public class HelmetMainProcess: ExperimentNetworkClient
             case MessageToHelmet.Code.ValidateTrial:
             case MessageToHelmet.Code.InvalidateTrial:
                 if (currentRunStage == RunStage.Running &&
-                    !_runConfigs[currentRunConfigIndex].isTraining
+                    !_runConfigs[currentRunningStepIndex].isTraining
                     )
                 {
                     if (message.code == MessageToHelmet.Code.ValidateTrial)
@@ -218,8 +267,32 @@ public class HelmetMainProcess: ExperimentNetworkClient
                         "Validate/invalidate can only be called during trials run"));
                 }
                 break;
+            case MessageToHelmet.Code.SetStepIsDone:
+                if (currentRunStage != RunStage.Idle)
+                {
+                    Send(new MessageFromHelmet.InvalidOperation(
+                        "Can change step is done only in Idle stage"));
+                    break;
+                }
+
+                var stepMsg = message as MessageToHelmet.SetStepIsDone;
+                long bitmap = participantPrefs.doneBitmap;
+                if (stepMsg.done)
+                {
+                    bitmap = Bitmap.SetTrue(bitmap, stepMsg.stepIndex);
+                }
+                else bitmap = Bitmap.SetFalse(bitmap, stepMsg.stepIndex);
+
+                participantPrefs.doneBitmap = bitmap;
+                SendSummary();
+                break;
             default:
                 throw new ArgumentException($"It seems you have implemented a new message from helmet but forget to handle in {nameof(Receive)} method");
         }
+    }
+
+    protected override void OnDestroy()
+    {
+        participantPrefs.Save();
     }
 }

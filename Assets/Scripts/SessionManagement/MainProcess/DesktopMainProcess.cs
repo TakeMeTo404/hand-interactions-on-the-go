@@ -4,12 +4,14 @@ using System.Linq;
 using TMPro;
 using UnityEngine;
 using UnityEngine.UI;
+using Utils;
 
 public class DesktopMainProcess: ExperimentNetworkServer
 {
     // ui stuff
     [SerializeField] private TextMeshProUGUI connectionIndicator;
     
+    [SerializeField] private Button saveButton;
     [SerializeField] private Button refreshButton; 
     [SerializeField] private TextMeshProUGUI summaryIndexIndicator;
     
@@ -19,9 +21,15 @@ public class DesktopMainProcess: ExperimentNetworkServer
     [SerializeField] private Button setLeftHanded;
     [SerializeField] private Button setRightHanded;
     
+    [SerializeField] private TextMeshProUGUI pointerText;
+    [SerializeField] private Button incrementPointerButton;
+    [SerializeField] private Button decrementPointerButton;
+    
     [SerializeField] private TextMeshProUGUI experimentStepsTable;
     [SerializeField] private TextMeshProUGUI errorMessageDisplay;
     
+    [SerializeField] private Button undoneButton;
+    [SerializeField] private Button doneButton;
     [SerializeField] private Button prepareButton;
     [SerializeField] private Button startButton;
     [SerializeField] private Button finishTrainingButton;
@@ -36,6 +44,8 @@ public class DesktopMainProcess: ExperimentNetworkServer
     private string error;
 
     private bool awaitingValidation;
+
+    private int pointer; // points to step, to which send the command (shows bold in table)
     
     protected override void Start()
     {
@@ -49,9 +59,16 @@ public class DesktopMainProcess: ExperimentNetworkServer
         setLeftHanded.onClick.AddListener(() => Send(new MessageToHelmet.SetLeftHanded(true)));
         setRightHanded.onClick.AddListener(() => Send(new MessageToHelmet.SetLeftHanded(false)));
         
-        prepareButton.onClick.AddListener(() => Send(new MessageToHelmet(MessageToHelmet.Code.PrepareNextRun)));
-        startButton.onClick.AddListener(() => Send(new MessageToHelmet(MessageToHelmet.Code.StartNextRun)));
-        finishTrainingButton.onClick.AddListener(() => Send(new MessageToHelmet(MessageToHelmet.Code.FinishTraining)));
+        undoneButton.onClick.AddListener(() => Send(new MessageToHelmet.SetStepIsDone(pointer, false)));
+        doneButton.onClick.AddListener(() => Send(new MessageToHelmet.SetStepIsDone(pointer, true)));
+        prepareButton.onClick.AddListener(() => Send(new MessageToHelmet.PrepareNextStep(pointer)));
+        startButton.onClick.AddListener(() => Send(new MessageToHelmet.StartNextStep(pointer)));
+        finishTrainingButton.onClick.AddListener(() => Send(new MessageToHelmet.FinishTrainingStep(pointer)));
+
+        incrementPointerButton.onClick.AddListener(() => { pointer++; Render(); });
+        decrementPointerButton.onClick.AddListener(() => { pointer--; Render(); });
+        
+        saveButton.onClick.AddListener(() => Send(new MessageToHelmet(MessageToHelmet.Code.SavePrefs)));
         
         validateButton.onClick.AddListener(() =>
         {
@@ -122,11 +139,17 @@ public class DesktopMainProcess: ExperimentNetworkServer
             setRightHanded.gameObject.SetActive(false);
             experimentStepsTable.gameObject.SetActive(false);
             errorMessageDisplay.gameObject.SetActive(false);
+            undoneButton.gameObject.SetActive(false);
+            doneButton.gameObject.SetActive(false);
             prepareButton.gameObject.SetActive(false);
             startButton.gameObject.SetActive(false);
             finishTrainingButton.gameObject.SetActive(false);
             validateButton.gameObject.SetActive(false);
             invalidateButton.gameObject.SetActive(false);
+            pointerText.gameObject.SetActive(false);
+            incrementPointerButton.gameObject.SetActive(false);
+            decrementPointerButton.gameObject.SetActive(false);
+            saveButton.gameObject.SetActive(false);
             
             if (!connected)
             {
@@ -172,8 +195,12 @@ public class DesktopMainProcess: ExperimentNetworkServer
         errorMessageDisplay.gameObject.SetActive(error != null);
         errorMessageDisplay.text = error ?? "";
 
+        pointerText.text = pointer.ToString();
+        pointerText.gameObject.SetActive(isIdle);
+        incrementPointerButton.gameObject.SetActive(isIdle);
+        decrementPointerButton.gameObject.SetActive(isIdle);
+
         // run configs table stuff
-        // var text = "Experiment Steps\n\nTYPE            Context         ReferenceFrame";
         var text = "Experiment Steps\n\nTYPE\t\t\tContext\t\t\tReferenceFrame";
         var runConfigs = HelmetMainProcess.GenerateRunConfigs(summary.id, summary.left);
         for (int i = 0; i < runConfigs.Length; i++)
@@ -195,7 +222,21 @@ public class DesktopMainProcess: ExperimentNetworkServer
                 line = $"{type}\t\t{context}\t\t\t{refFrame}";
             }
 
-            if (i < summary.index) // means that run was fulfilled. Color it in blue
+            if (i == summary.index)
+            {
+                var color = summary.stage == (int)HelmetMainProcess.RunStage.Running ? "green" : "yellow";
+                line = $"<color=\"{color}\">{line}</color>";
+            }
+            else
+            {
+                var color = Bitmap.GetBool(summary.doneBitmap, i) ? "grey" : "white";
+                line = $"<color=\"{color}\">{line}</color>";
+            }
+            
+            if (i == pointer) 
+                line = $"<b>{line}</b>";
+            
+            /*if (i < summary.index) // means that run was fulfilled. Color it in blue
             {
                 line = $"<color=\"blue\">{line}</color>";
             }
@@ -211,25 +252,43 @@ public class DesktopMainProcess: ExperimentNetworkServer
                     var color = summary.stage == (int)HelmetMainProcess.RunStage.Running ? "green" : "yellow";
                     line = $"<color=\"{color}\">{line}</color>";
                 }
-            }
+            }*/
 
             text += "\n" + line;
         }
         experimentStepsTable.text = text;
         experimentStepsTable.gameObject.SetActive(true);
-        
-        // prepare/start/finishTraining stuff
-        bool allRun = summary.index >= runConfigs.Length;
-        if (allRun)
+
+        // start, prepare, done, undone, finish stuff
+        if (isIdle)
         {
-            prepareButton.gameObject.SetActive(false);
+            bool done = Bitmap.GetBool(summary.doneBitmap, pointer);
+            prepareButton.gameObject.SetActive(!done);
+            doneButton.gameObject.SetActive(!done);
+            undoneButton.gameObject.SetActive(done);
+            
             startButton.gameObject.SetActive(false);
             finishTrainingButton.gameObject.SetActive(false);
-            return;
         }
-        prepareButton.gameObject.SetActive(summary.stage != (int)HelmetMainProcess.RunStage.Running);
-        startButton.gameObject.SetActive(summary.stage == (int)HelmetMainProcess.RunStage.Preparing);
-        bool isCurrentTraining = runConfigs[summary.index].isTraining || runConfigs[summary.index].isMetronomeTraining;
-        finishTrainingButton.gameObject.SetActive(isCurrentTraining && summary.stage == (int)HelmetMainProcess.RunStage.Running);
+        else
+        {
+            doneButton.gameObject.SetActive(false);
+            undoneButton.gameObject.SetActive(false);
+
+            bool pointsToRunning = pointer == summary.index;
+            if (!pointsToRunning)
+            {
+                prepareButton.gameObject.SetActive(false);
+                startButton.gameObject.SetActive(false);
+                finishTrainingButton.gameObject.SetActive(false);
+            }
+            else
+            {
+                prepareButton.gameObject.SetActive(summary.stage != (int)HelmetMainProcess.RunStage.Running);
+                startButton.gameObject.SetActive(summary.stage == (int)HelmetMainProcess.RunStage.Preparing);
+                bool isCurrentTraining = runConfigs[summary.index].isTraining || runConfigs[summary.index].isMetronomeTraining;
+                finishTrainingButton.gameObject.SetActive(isCurrentTraining && summary.stage == (int)HelmetMainProcess.RunStage.Running);
+            }
+        }
     }
 }
