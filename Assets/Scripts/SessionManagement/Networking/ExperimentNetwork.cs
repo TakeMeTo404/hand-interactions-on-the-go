@@ -43,7 +43,7 @@ public class ExperimentNetwork: MonoBehaviour
             
             public override string ToString()
             {
-                return base.ToString() + $", participantId={id}," + (left ? "left" : "right") + $"Handed, index={index}, stage={stage}";
+                return base.ToString() + $", participantId={id}," + (left ? "left" : "right") + $"Handed, index={index}, stage={stage}, doneBitmap={doneBitmap}";
             }
         }
         

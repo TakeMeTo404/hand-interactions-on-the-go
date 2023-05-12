@@ -65,8 +65,18 @@ public class DesktopMainProcess: ExperimentNetworkServer
         startButton.onClick.AddListener(() => Send(new MessageToHelmet.StartNextStep(pointer)));
         finishTrainingButton.onClick.AddListener(() => Send(new MessageToHelmet.FinishTrainingStep(pointer)));
 
-        incrementPointerButton.onClick.AddListener(() => { pointer++; Render(); });
-        decrementPointerButton.onClick.AddListener(() => { pointer--; Render(); });
+        decrementPointerButton.onClick.AddListener(() =>
+        {
+            if (pointer < 18)
+                pointer++; 
+            Render();
+        });
+        incrementPointerButton.onClick.AddListener(() =>
+        {
+            if (pointer > 0)
+                pointer--; 
+            Render();
+        });
         
         saveButton.onClick.AddListener(() => Send(new MessageToHelmet(MessageToHelmet.Code.SavePrefs)));
         
@@ -171,6 +181,8 @@ public class DesktopMainProcess: ExperimentNetworkServer
         
         connectionIndicator.text = "<color=\"green\">CONNECTED</color>";
 
+        saveButton.gameObject.SetActive(true);
+        
         // summary refresh stuff
         refreshButton.gameObject.SetActive(true);
         summaryIndexIndicator.gameObject.SetActive(true);
@@ -235,24 +247,6 @@ public class DesktopMainProcess: ExperimentNetworkServer
             
             if (i == pointer) 
                 line = $"<b>{line}</b>";
-            
-            /*if (i < summary.index) // means that run was fulfilled. Color it in blue
-            {
-                line = $"<color=\"blue\">{line}</color>";
-            }
-            else if (i == summary.index)
-            {
-                if (summary.stage == (int)HelmetMainProcess.RunStage.Idle) // make it Bold to indicate it will be next
-                {
-                    line = $"<b>{line}</b>";
-                }
-                else
-                {
-                    // yellow – preparing, green – running
-                    var color = summary.stage == (int)HelmetMainProcess.RunStage.Running ? "green" : "yellow";
-                    line = $"<color=\"{color}\">{line}</color>";
-                }
-            }*/
 
             text += "\n" + line;
         }

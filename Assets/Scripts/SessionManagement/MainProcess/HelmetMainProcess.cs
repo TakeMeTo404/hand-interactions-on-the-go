@@ -9,9 +9,6 @@ using Utils;
 public class HelmetMainProcess: ExperimentNetworkClient
 {
     private ParticipantPrefs participantPrefs;
-    
-    /*private int participantId = 1;
-    private bool leftHanded = false;*/
 
     private ExperimentManager.RunConfig[] _runConfigs;
     private int currentRunningStepIndex; // for example 4, means that previous 4 runs (0,1,2,3) were fulfilled already
@@ -112,12 +109,9 @@ public class HelmetMainProcess: ExperimentNetworkClient
         Send(summary);
     }
 
-    protected override void Start()
+    private void PrefsFromFileOrDefault(int participantId)
     {
-        base.Start();
-        
-        participantPrefs = ParticipantPrefs.ForParticipant(1);
-        UpdateRunConfigs();
+        participantPrefs = ParticipantPrefs.ForParticipant(participantId);
 
         int indexOfMetronomeTraining = _runConfigs.ToList().FindIndex(config => config.isMetronomeTraining);
         int indexOfComfortUIPlacement = _runConfigs.ToList().FindIndex(config => config.isPlacingComfortYAndZ);
@@ -125,7 +119,16 @@ public class HelmetMainProcess: ExperimentNetworkClient
         bitmap = Bitmap.SetFalse(bitmap, indexOfMetronomeTraining);
         bitmap = Bitmap.SetFalse(bitmap, indexOfComfortUIPlacement);
         participantPrefs.doneBitmap = bitmap;
-        
+    }
+
+    protected override void Start()
+    {
+        base.Start();
+
+        int startParticipantId = 1;
+        PrefsFromFileOrDefault(startParticipantId);
+        UpdateRunConfigs();
+
         connectionEstablished.AddListener(SendSummary);
         experimentManager.unexpectedErrorOccured.AddListener((error) =>
         {
@@ -179,7 +182,8 @@ public class HelmetMainProcess: ExperimentNetworkClient
                 }
                 else
                 {
-                    participantPrefs.participantId = (message as MessageToHelmet.SetParticipantID).participantID;
+                    var participantId = (message as MessageToHelmet.SetParticipantID).participantID;
+                    PrefsFromFileOrDefault(participantId);
                     UpdateRunConfigs();
                     SendSummary();
                 }
